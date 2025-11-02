@@ -1,20 +1,17 @@
+from pathlib import Path
 from pyspark.sql import SparkSession
 import pyspark.sql.functions as sf
 
-logFile = "hamlet.txt"  # Should be some file on your system
+def spark_count_words(txt_file:str) -> None:
+    spark = SparkSession.builder.appName("WordCount").getOrCreate()
+    df = spark.read.text(txt_file).cache()
+    df = df.repartition(100)
+    df = df.withColumn("word_lists", sf.split(df.value, ' '))
+    num_words = df.select( sf.explode(df.word_lists) ).count()
+    print("Number of Words: %i" % (num_words))
+    spark.stop()
 
-spark = SparkSession.builder.appName("WordCount").getOrCreate()
 
-logData = spark.read.text(logFile).cache()
-
-# Create a new dataframe by splitting each row from logData. In effect,
-# the new df splitWords will have one col, wordLists, with each element
-# being a list of the words in each line of Hamlet.
-splitWords = logData.select(sf.split(logData.value, ' ').alias('wordLists'))
-# Explode over the lists of words, creating a col where each elt is a single word.
-# Take count of this col to get word count.
-numWords = splitWords.select( sf.explode(splitWords.wordLists) ).count()
-
-print("Number of Words: %i" % (numWords))
-
-spark.stop()
+if __name__ == "__main__":
+    text_file = "hamlet.txt"
+    spark_count_words("hamlet.txt")
