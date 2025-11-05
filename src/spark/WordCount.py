@@ -10,7 +10,7 @@ def spark_count_words(spark_session, txt_file:str, num_cores:int) -> None:
     convert each line to list of strings and explode.
     Count rows.
     """
-    df = spark_session.read.text(txt_file).cache()
+    df = spark_session.read.text(txt_file)
     df = df.withColumn("word_lists", sf.split(df.value, ' '))
     num_words = df.select( sf.explode(df.word_lists) ).count()
 
@@ -21,15 +21,16 @@ def time_spark(data_set:Literal["toy", "small", "medium"], max_num_cores:int, nu
     """
     for i in range(1, max_num_cores+1):
         # Initialize spark session here to avoid init time being counted in runtime.
-        spark = SparkSession.builder. \
-            appName("WordCount") \
+        spark = SparkSession.builder \
+            .appName("WordCount") \
             .master(f"local[{i}]") \
+            .config("spark.driver.memory", "15g") \
             .getOrCreate()
         total_time = 0
         for test_num in range(num_tests):
             # Start time, run word count, and check elapsed time.
             start_time = time.perf_counter()
-            spark_count_words(spark_session=spark, txt_file="toy", num_cores=i)
+            spark_count_words(spark_session=spark, txt_file=data_set, num_cores=i)
             end_time = time.perf_counter()
             elapsed_time = end_time - start_time
             total_time += elapsed_time
@@ -39,6 +40,6 @@ def time_spark(data_set:Literal["toy", "small", "medium"], max_num_cores:int, nu
 
 
 if __name__ == "__main__":
-    time_spark(data_set="toy", max_num_cores=4, num_tests=1)
+    time_spark(data_set="medium", max_num_cores=4, num_tests=1)
         
         

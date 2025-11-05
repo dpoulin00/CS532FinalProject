@@ -216,3 +216,9 @@ __marimo__/
 
 # BUT, make an exception for the .gitkeep file 
 !/dataset/.gitkeep
+
+# Dataset folders
+toy/
+small/
+medium/
+
