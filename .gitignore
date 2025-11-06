@@ -206,7 +206,19 @@ marimo/_static/
 marimo/_lsp/
 __marimo__/
 
+# Java
+*.jar
+*.class
+
+# --- Dataset Rules --- 
+# Ignore all contents of the dataset directory 
+/dataset/*  
+
+# BUT, make an exception for the .gitkeep file 
+!/dataset/.gitkeep
+
 # Dataset folders
 toy/
 small/
 medium/
+
