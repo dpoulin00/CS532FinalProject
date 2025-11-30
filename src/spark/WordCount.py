@@ -2,8 +2,10 @@ import time
 from pathlib import Path
 from typing import Literal
 from multiprocessing import Process, Queue
+import numpy as np
 from pyspark.sql import SparkSession
 import pyspark.sql.functions as sf
+import pyspark.sql.types as st
 import psutil
 import os
 from functools import wraps
@@ -74,13 +76,23 @@ def measure_performance(func, sample_interval_secs:int, num_tests:int, *args, **
     return
 
 
-def spark_count_words(spark_session, txt_file:str) -> None:
+def spark_count_words(spark_session, txt_file:str, simulate_task_errors:bool=False) -> None:
     """
     Read text in to dataframe,
     convert each line to list of strings and explode.
     Count rows.
     """
+    def simulate_failure(value):
+        """Applying this function to a string column will simulate task fail with prob 0.2"""
+        simulate_fail_flag = np.random.choice(a=[True, False], p=[0.2, 0.8], replace=True)
+        if simulate_fail_flag:
+            raise Exception("Simulated Fail") from None
+        return value
+    simulate_failure_udf = sf.udf(simulate_failure, st.StringType())
+            
     df = spark_session.read.text( f"dataset/{txt_file}")
+    if simulate_task_errors:
+        df = df.withColumn("value", simulate_failure_udf(df["value"]))
     df = df.withColumn("word_lists", sf.split(df.value, ' '))
     num_words = df.select( sf.explode(df.word_lists) ).count()
     return num_words
@@ -97,12 +109,13 @@ def main(data_set:Literal["toy", "small", "medium"], max_num_cores:int, num_test
             .master(f"local[{i}]") \
             .config("spark.driver.memory", "15g") \
             .config("spark.jars.packages", "ch.cern.sparkmeasure:spark-measure_2.13:0.27") \
+            .config("spark.task.maxFailures", 100) \
             .getOrCreate()
         # Measure performance with different numbers of cores.
         print(f"{i} Cores:")
-        measure_performance(func=spark_count_words, sample_interval_secs=10,
+        measure_performance(func=spark_count_words, sample_interval_secs=5,
                             num_tests=2,
-                            spark_session=spark, txt_file=data_set)
+                            spark_session=spark, txt_file=data_set, simulate_task_errors=True)
         spark.stop()
 
 
