@@ -14,6 +14,13 @@ import resource
 
 
 def measure_performance(func, sample_interval_secs:int, num_tests:int, *args, **kwargs):
+    """
+    func: Function whose performance we'll measure.
+    sample_interval_secs: While function runs, number of seconds between measuring performance.
+    num_tests: Number of times to run function.
+    args, kwargs: passed to func.
+    """
+    # For each test, we'll save metrics to these lists.
     test_cpu_percents = []
     test_mem_used = []
     test_time = []
@@ -38,17 +45,20 @@ def measure_performance(func, sample_interval_secs:int, num_tests:int, *args, **
         p.start()
         time.sleep(1)
         for child in psutil_p.children():
-            # Initial cpu_percent will be 0 for all children
+            # Initial cpu_percent will be 0 for all children, but
+            # we must call this now so cpu_percent has a starting point.
             child.cpu_percent(interval=None)
         while p.is_alive():
+            # Every interval, we measure CPU percentage and memory
+            # usage of the main process and any children.
             time.sleep(sample_interval_secs)
             sum_cpu_percent_measurements += psutil_p.cpu_percent(interval=None)
             sum_mem_measurements += psutil_p.memory_info().rss
-            for child in psutil_p.children():
+            for child in psutil_p.children(recursive=True):
                 sum_cpu_percent_measurements += child.cpu_percent(interval=None)
                 sum_mem_measurements += child.memory_info().rss
             num_measures += 1
-        # Save performance metrics from this iter.
+        # Save performance metrics from this test.
         end_time = time.time()
         total_time = end_time - start_time
         test_cpu_percents.append(sum_cpu_percent_measurements / num_measures)
@@ -80,7 +90,7 @@ def main(data_set:Literal["toy", "small", "medium"], max_num_cores:int, num_test
     """
     Iterate through each number of cores, and run num_tests for each. Print average runtime.
     """
-    for i in range(2, max_num_cores+1):
+    for i in range(1, max_num_cores+1):
         # Initialize spark session here to avoid init time being counted in runtime.
         spark = SparkSession.builder \
             .appName("WordCount") \
@@ -88,8 +98,7 @@ def main(data_set:Literal["toy", "small", "medium"], max_num_cores:int, num_test
             .config("spark.driver.memory", "15g") \
             .config("spark.jars.packages", "ch.cern.sparkmeasure:spark-measure_2.13:0.27") \
             .getOrCreate()
-        
-        #spark_count_words(spark_session=spark, txt_file=data_set)
+        # Measure performance with different numbers of cores.
         print(f"{i} Cores:")
         measure_performance(func=spark_count_words, sample_interval_secs=10,
                             num_tests=2,
@@ -98,6 +107,6 @@ def main(data_set:Literal["toy", "small", "medium"], max_num_cores:int, num_test
 
 
 if __name__ == "__main__":
-    main(data_set="medium", max_num_cores=4, num_tests=1)
+    main(data_set="toy", max_num_cores=4, num_tests=1)
         
         
