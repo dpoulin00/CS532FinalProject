@@ -1,18 +1,11 @@
 import time
-from pathlib import Path
 from typing import Literal
-from multiprocessing import Process, Queue
+from multiprocessing import Process
 import numpy as np
 from pyspark.sql import SparkSession
 import pyspark.sql.functions as sf
 import pyspark.sql.types as st
 import psutil
-import os
-from functools import wraps
-from signal import SIGTERM
-import time
-import statistics
-import resource
 
 
 def measure_performance(func, sample_interval_secs:int, num_tests:int, *args, **kwargs):
@@ -26,6 +19,7 @@ def measure_performance(func, sample_interval_secs:int, num_tests:int, *args, **
     test_cpu_percents = []
     test_mem_used = []
     test_time = []
+    
     for i in range(num_tests):
         # Set up func to be run as its own process, so we
         # can measure it as it goes. Note that we also set
@@ -35,21 +29,24 @@ def measure_performance(func, sample_interval_secs:int, num_tests:int, *args, **
                     kwargs=kwargs)
         p.daemon = False
         psutil_p = psutil.Process(p.pid)
+        
         # Take some starting measurements
-        cpu_percent_before = psutil_p.cpu_percent(interval=None)
-        mem_used_before = psutil_p.memory_info().rss
         start_time = time.time()
+        
         # Counters so we can calculate the averages
         sum_cpu_percent_measurements = 0
         sum_mem_measurements = 0
         num_measures = 0
+        
         # Start process
         p.start()
         time.sleep(1)
+        
         for child in psutil_p.children():
             # Initial cpu_percent will be 0 for all children, but
             # we must call this now so cpu_percent has a starting point.
             child.cpu_percent(interval=None)
+            
         while p.is_alive():
             # Every interval, we measure CPU percentage and memory
             # usage of the main process and any children.
@@ -60,12 +57,14 @@ def measure_performance(func, sample_interval_secs:int, num_tests:int, *args, **
                 sum_cpu_percent_measurements += child.cpu_percent(interval=None)
                 sum_mem_measurements += child.memory_info().rss
             num_measures += 1
+            
         # Save performance metrics from this test.
         end_time = time.time()
         total_time = end_time - start_time
         test_cpu_percents.append(sum_cpu_percent_measurements / num_measures)
         test_mem_used.append(sum_mem_measurements / num_measures)
         test_time.append(total_time)
+        
     # Calculate averages across tests
     avg_cpu_percent = sum(test_cpu_percents) / num_tests
     avg_mem_used = sum(test_mem_used) / num_tests
@@ -73,6 +72,7 @@ def measure_performance(func, sample_interval_secs:int, num_tests:int, *args, **
     print(f"CPU Usage: {avg_cpu_percent: .2f} %")
     print(f"Memory Usage: {avg_mem_used / (1024**2): .2f} MB")
     print(f"Time: {avg_time: .2f} seconds")
+    
     return
 
 
@@ -82,19 +82,24 @@ def spark_count_words(spark_session, txt_file:str, simulate_task_errors:bool=Fal
     convert each line to list of strings and explode.
     Count rows.
     """
+    
     def simulate_failure(value):
         """Applying this function to a string column will simulate task fail with prob 0.2"""
         simulate_fail_flag = np.random.choice(a=[True, False], p=[0.2, 0.8], replace=True)
         if simulate_fail_flag:
             raise Exception("Simulated Fail") from None
         return value
+    
     simulate_failure_udf = sf.udf(simulate_failure, st.StringType())
             
     df = spark_session.read.text( f"dataset/{txt_file}")
+    
     if simulate_task_errors:
         df = df.withColumn("value", simulate_failure_udf(df["value"]))
+        
     df = df.withColumn("word_lists", sf.split(df.value, ' '))
     num_words = df.select( sf.explode(df.word_lists) ).count()
+    
     return num_words
 
 
@@ -121,5 +126,3 @@ def main(data_set:Literal["toy", "small", "medium"], max_num_cores:int, num_test
 
 if __name__ == "__main__":
     main(data_set="toy", max_num_cores=4, num_tests=1)
-        
-        
