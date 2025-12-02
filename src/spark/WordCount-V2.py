@@ -472,7 +472,9 @@ def spark_count_words_with_core_failures(spark_session, txt_file:str, failed_cor
 
 
 
-def main(data_set:Literal["toy", "small", "medium"], max_num_cores:int, num_tests:int) -> None:
+def main(data_set:Literal["toy", "small", "medium"],
+         max_num_cores:int, num_tests:int,
+         mem_frac:float, num_partitions:int) -> None:
     """Compare steady-state vs failure runs for each core count and print metrics.
     
     1. For each core count from 1 to max_num_cores:
@@ -486,6 +488,9 @@ def main(data_set:Literal["toy", "small", "medium"], max_num_cores:int, num_test
         data_set: Which dataset to use ("toy", "small", or "medium")
         max_num_cores: Maximum parallelism level to test (tests 1..max_num_cores)
         num_tests: How many runs to average for each configuration
+        mem_frac: Fraction of JVM heap space (300 MiB, ~314 MB) used for
+            spark execution and storage.
+        num_partitions: Number of partitions to use when shuffling data.
     """
 
 
@@ -507,6 +512,8 @@ def main(data_set:Literal["toy", "small", "medium"], max_num_cores:int, num_test
             .config("spark.driver.memory", "15g") \
             .config("spark.jars.packages", "ch.cern.sparkmeasure:spark-measure_2.13:0.27") \
             .config("spark.task.maxFailures", "100") \
+            .config("spark.memory.fraction", f"{mem_frac: .2f}") \
+            .config("spark.sql.shuffle.partitions", f"{num_partitions}") \
             .getOrCreate()
 
 
@@ -606,4 +613,4 @@ def main(data_set:Literal["toy", "small", "medium"], max_num_cores:int, num_test
 
 
 if __name__ == "__main__":
-    main(data_set="medium", max_num_cores=8, num_tests=1) # average when num_tests > 1
+    main(data_set="toy", max_num_cores=4, num_tests=1, mem_frac=0.03, num_partitions=200) # average when num_tests > 1
