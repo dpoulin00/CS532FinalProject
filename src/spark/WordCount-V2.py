@@ -247,6 +247,7 @@ def _load_dataset_lines_df(spark_session:SparkSession, txt_file:str):
         
     # Spark's DataFrame reader handles both files and directories under the dataset path.
     # read.text() treats each line as a single-column DataFrame with column name "value"
+
     lines_df = spark_session.read.text(str(dataset_path))
     
     # Calculate total dataset size for throughput metrics
@@ -326,9 +327,9 @@ def spark_count_words(spark_session, txt_file:str, total_cores:int) -> dict:
     # Reuse the shared loader so both baseline and failure modes ingest data identically.
     # This ensures apples-to-apples comparison between runs.
     _, lines_df, dataset_bytes = _load_dataset_lines_df(spark_session, txt_file)
-    
+
     action_start = time.time()  # Mark when we begin the actual Spark action
-    
+
     # Build a DataFrame of individual words using split + explode so we mirror
     words_df = (
         lines_df
@@ -417,6 +418,7 @@ def spark_count_words_with_core_failures(spark_session, txt_file:str, failed_cor
         # Wrap the RDD so the chosen partitions raise exactly once on their first attempt.
         # This transforms the words_rdd into a failure-injected version.
         words_rdd = _fail_partitions_once(words_rdd, failing_partitions)
+        
 
 
     try:
@@ -451,7 +453,7 @@ def spark_count_words_with_core_failures(spark_session, txt_file:str, failed_cor
         
         # Re-run the word count on the clean DataFrame (no simulated failures).
         num_words = retry_words_df.count()
-        
+
         end_time = time.time()
         
         # Calculate how much extra time the manual recovery added
@@ -474,7 +476,8 @@ def spark_count_words_with_core_failures(spark_session, txt_file:str, failed_cor
 
 def main(data_set:Literal["toy", "small", "medium"],
          max_num_cores:int, num_tests:int,
-         mem_frac:float, num_partitions:int) -> None:
+         mem_frac:float=0.6, num_partitions:int=200,
+         core_failure_policy:dict={4: 0, 3: 0, 2: 0, 1: 0}) -> None:
     """Compare steady-state vs failure runs for each core count and print metrics.
     
     1. For each core count from 1 to max_num_cores:
@@ -491,12 +494,9 @@ def main(data_set:Literal["toy", "small", "medium"],
         mem_frac: Fraction of JVM heap space (300 MiB, ~314 MB) used for
             spark execution and storage.
         num_partitions: Number of partitions to use when shuffling data.
+        core_failure_policy: Dict. Define how many simulated cores we "lose"
+            at each tested parallelism level. Unlisted core counts have 0 failures.
     """
-
-
-    # Define how many simulated cores we "lose" at each tested parallelism level.
-    # Example: at 4 cores lose 1, at 8 cores lose 2. Unlisted core counts have 0 failures.
-    core_failure_policy = {4: 1, 8: 2}  # Losing 1 core at 4-way parallelism, 2 cores at 8-way, etc.
     
     baseline_runtime = None  # Will store single-core runtime for speedup calculation
     per_core_metrics = []  # List of (cores, baseline_metrics, failure_metrics, scalability)
@@ -510,12 +510,10 @@ def main(data_set:Literal["toy", "small", "medium"],
             .appName("WordCount") \
             .master(f"local[{i}]") \
             .config("spark.driver.memory", "15g") \
-            .config("spark.jars.packages", "ch.cern.sparkmeasure:spark-measure_2.13:0.27") \
             .config("spark.task.maxFailures", "100") \
             .config("spark.memory.fraction", f"{mem_frac: .2f}") \
             .config("spark.sql.shuffle.partitions", f"{num_partitions}") \
             .getOrCreate()
-
 
         # Measure steady-state performance for this core count.
         # This gives us the baseline to compare against failure scenarios.
@@ -561,56 +559,65 @@ def main(data_set:Literal["toy", "small", "medium"],
         scalability = (baseline_runtime / baseline_metrics["runtime"]) if baseline_metrics["runtime"] else 0
         per_core_metrics.append((i, baseline_metrics, failure_metrics, scalability))
 
-        # Print baseline (no-failure) metrics first
-        print("\nInitialization Overhead (no failures): "
-              f"{baseline_metrics['initialization_overhead']: .2f} seconds")
-        print(f"{i} Cores (steady state):")
-        print(f"CPU Usage: {baseline_metrics['cpu_percent']: .2f} %")
-        print(f"Memory Usage: {baseline_metrics['memory_mb']: .2f} MB")
-        print(f"RunTime: {baseline_metrics['runtime']: .2f} seconds")
-        print("**Throughput:** "
-              f"{baseline_metrics['throughput_words']: .2f} words/sec |"
-              f" {baseline_metrics['throughput_mb']: .2f} MB/sec")
-        print("**Scalability:** "
-              f"{scalability: .2f}x relative to 1 core")
 
-
-        if failure_metrics:
-            # Compare steady-state runtime with the failure run to quantify the penalty.
-            # Recovery overhead = total failure runtime - baseline runtime
-            recovery_overhead = failure_metrics["runtime"] - baseline_metrics["runtime"]
-            
-            print("\nInitialization Overhead (simulated core failure): "
-                  f"{failure_metrics['initialization_overhead']: .2f} seconds")
-            print(f"{i} Cores with {failure_budget} core failure(s):")
-            print(f"CPU Usage: {failure_metrics['cpu_percent']: .2f} %")
-            print(f"Memory Usage: {failure_metrics['memory_mb']: .2f} MB")
-            print(f"RunTime: {failure_metrics['runtime']: .2f} seconds")
+        # We'll save our metrics to the log file.
+        with open("log.txt", "a") as log:
+            # Print baseline (no-failure) metrics first
+            print("\nInitialization Overhead (no failures): "
+                f"{baseline_metrics['initialization_overhead']: .2f} seconds",
+                file=log)
+            print(f"{i} Cores (steady state):", file=log)
+            print(f"CPU Usage: {baseline_metrics['cpu_percent']: .2f} %", file=log)
+            print(f"Memory Usage: {baseline_metrics['memory_mb']: .2f} MB", file=log)
+            print(f"RunTime: {baseline_metrics['runtime']: .2f} seconds", file=log)
             print("**Throughput:** "
-                  f"{failure_metrics['throughput_words']: .2f} words/sec |"
-                  f" {failure_metrics['throughput_mb']: .2f} MB/sec")
-            
-            # Side-by-side comparison of baseline vs failure runtime
-            print(f"Total Execution Time (no failures): {baseline_metrics['runtime']: .2f} seconds")
-            print(f"Total Execution Time (with failures): {failure_metrics['runtime']: .2f} seconds")
-            print(f"Recovery Overhead: {recovery_overhead: .2f} seconds")
-            print(f"Measured Retry Overhead (time spent reprocessing): {failure_metrics['retry_overhead']: .2f} seconds")
-            
-            if failure_metrics["failure_reschedules"]:
-                # Spark reports how many partitions had to be retried, which approximates lost cores.
-                # This confirms our failure injection actually triggered retries.
-                print("Rescheduled partitions (proxy for failed cores): "
-                      f"{failure_metrics['failure_reschedules']}")
+                f"{baseline_metrics['throughput_words']: .2f} words/sec |"
+                f" {baseline_metrics['throughput_mb']: .2f} MB/sec", file=log)
+            print("**Scalability:** "
+                f"{scalability: .2f}x relative to 1 core", file=log)
 
 
-    # Print summary scalability table showing speedup at each core count
-    print("\n**Scalability:** T₁ / T across core configurations")
-    for core_count, _, _, scala in per_core_metrics:
-        # Ideal linear speedup would be 1x, 2x, 3x, 4x for 1, 2, 3, 4 cores.
-        print(f"{core_count} cores: {scala: .2f}x")
+            if failure_metrics:
+                # Compare steady-state runtime with the failure run to quantify the penalty.
+                # Recovery overhead = total failure runtime - baseline runtime
+                recovery_overhead = failure_metrics["runtime"] - baseline_metrics["runtime"]
+                
+                print("\nInitialization Overhead (simulated core failure): "
+                    f"{failure_metrics['initialization_overhead']: .2f} seconds", file=log)
+                print(f"{i} Cores with {failure_budget} core failure(s):", file=log)
+                print(f"CPU Usage: {failure_metrics['cpu_percent']: .2f} %", file=log)
+                print(f"Memory Usage: {failure_metrics['memory_mb']: .2f} MB", file=log)
+                print(f"RunTime: {failure_metrics['runtime']: .2f} seconds", file=log)
+                print("**Throughput:** "
+                    f"{failure_metrics['throughput_words']: .2f} words/sec |"
+                    f" {failure_metrics['throughput_mb']: .2f} MB/sec", file=log)
+                
+                # Side-by-side comparison of baseline vs failure runtime
+                print(f"Total Execution Time (no failures): {baseline_metrics['runtime']: .2f} seconds", file=log)
+                print(f"Total Execution Time (with failures): {failure_metrics['runtime']: .2f} seconds", file=log)
+                print(f"Recovery Overhead: {recovery_overhead: .2f} seconds", file=log)
+                print(f"Measured Retry Overhead (time spent reprocessing): {failure_metrics['retry_overhead']: .2f} seconds", file=log)
+                
+                if failure_metrics["failure_reschedules"]:
+                    # Spark reports how many partitions had to be retried, which approximates lost cores.
+                    # This confirms our failure injection actually triggered retries.
+                    print("Rescheduled partitions (proxy for failed cores): "
+                        f"{failure_metrics['failure_reschedules']}", file=log)
+
+
+            # Print summary scalability table showing speedup at each core count
+            print("\n**Scalability:** T₁ / T across core configurations", file=log)
+            for core_count, _, _, scala in per_core_metrics:
+                # Ideal linear speedup would be 1x, 2x, 3x, 4x for 1, 2, 3, 4 cores.
+                print(f"{core_count} cores: {scala: .2f}x", file=log)
 
 
 
 
 if __name__ == "__main__":
-    main(data_set="toy", max_num_cores=4, num_tests=1, mem_frac=0.03, num_partitions=200) # average when num_tests > 1
+    # Clear the log file each run
+    with open("log.txt", 'w') as file:
+        pass
+    main(data_set="small", max_num_cores=8, num_tests=1, mem_frac=( 128/(15000-300) ), num_partitions=200,
+         core_failure_policy={8: 0, 4: 0, 2: 0, 1: 0})
+
