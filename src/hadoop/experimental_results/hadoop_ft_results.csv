@@ -1,0 +1,5 @@
+dataset,cores,runtime,outcome
+toy,1,2304.1096913814545,Recovered
+toy,2,1852.1260964870453,Recovered
+toy,4,1249.0884718894958,Recovered
+toy,8,974.5699076652527,Recovered
